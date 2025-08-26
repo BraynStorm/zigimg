@@ -192,8 +192,8 @@ fn paeth(b4: u8, up: u8, b4_up: u8) u8 {
 }
 
 test "filtering 16-bit grayscale pixels uses correct endianess" {
-    var output_bytes = std.ArrayList(u8).init(std.testing.allocator);
-    defer output_bytes.deinit();
+    var output_bytes = std.ArrayList(u8).empty;
+    defer output_bytes.deinit(std.testing.allocator);
 
     const pixels = try std.testing.allocator.dupe(color.Grayscale16, &.{
         .{ .value = 0xF },
@@ -208,7 +208,7 @@ test "filtering 16-bit grayscale pixels uses correct endianess" {
     defer std.testing.allocator.free(pixels);
 
     // We specify the endianess as none to simplify the test
-    try filter(std.testing.allocator, output_bytes.writer(), .{ .grayscale16 = pixels }, .{ .specified = .none }, .{
+    try filter(std.testing.allocator, output_bytes.writer(std.testing.allocator), .{ .grayscale16 = pixels }, .{ .specified = .none }, .{
         .width = 4,
         .height = 2,
         .bit_depth = 16,

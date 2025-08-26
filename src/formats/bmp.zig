@@ -149,22 +149,21 @@ pub const BMP = struct {
         };
     }
 
-    pub fn formatDetect(stream: *ImageUnmanaged.Stream) ImageUnmanaged.Stream.ReadError!bool {
-        var magic_number_buffer: [2]u8 = undefined;
-        _ = try stream.read(magic_number_buffer[0..]);
-        if (std.mem.eql(u8, magic_number_buffer[0..], BitmapMagicHeader[0..])) {
+    pub fn formatDetect(reader: *std.Io.Reader) ImageUnmanaged.ReadError!bool {
+        const magic_number_buffer = try reader.peekArray(2);
+        if (std.mem.eql(u8, magic_number_buffer, &BitmapMagicHeader)) {
             return true;
         }
 
         return false;
     }
 
-    pub fn readImage(allocator: std.mem.Allocator, stream: *ImageUnmanaged.Stream) ImageUnmanaged.ReadError!ImageUnmanaged {
+    pub fn readImage(allocator: std.mem.Allocator, reader: *std.Io.Reader) ImageUnmanaged.ReadError!ImageUnmanaged {
         var result = ImageUnmanaged{};
         errdefer result.deinit(allocator);
 
         var bmp = BMP{};
-        const pixels = try bmp.read(allocator, stream);
+        const pixels = try bmp.read(allocator, reader);
 
         result.width = @intCast(bmp.width());
         result.height = @intCast(bmp.height());
@@ -173,7 +172,7 @@ pub const BMP = struct {
         return result;
     }
 
-    pub fn writeImage(allocator: std.mem.Allocator, stream: *ImageUnmanaged.Stream, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageUnmanaged.WriteError!void {
+    pub fn writeImage(allocator: std.mem.Allocator, writer: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageUnmanaged.WriteError!void {
         var bmp = BMP{};
 
         //  Fill header information based on pixel format
@@ -229,7 +228,7 @@ pub const BMP = struct {
             },
         }
 
-        try bmp.write(stream, image.pixels);
+        try bmp.write(writer, image.pixels);
 
         _ = allocator;
         _ = encoder_options;
@@ -271,18 +270,14 @@ pub const BMP = struct {
         };
     }
 
-    pub fn read(self: *BMP, allocator: std.mem.Allocator, stream: *ImageUnmanaged.Stream) ImageUnmanaged.ReadError!color.PixelStorage {
-        var buffered_stream = buffered_stream_source.bufferedStreamSourceReader(stream);
-
+    pub fn read(self: *BMP, allocator: std.mem.Allocator, reader: *ImageUnmanaged.Stream) ImageUnmanaged.ReadError!color.PixelStorage {
         // Read file header
-        const reader = buffered_stream.reader();
-        self.file_header = try utils.readStruct(reader, BitmapFileHeader, .little);
-        if (!std.mem.eql(u8, self.file_header.magic_header[0..], BitmapMagicHeader[0..])) {
+        self.file_header = try reader.takeStruct(BitmapFileHeader, .little);
+        if (!std.mem.eql(u8, &self.file_header.magic_header, &BitmapMagicHeader)) {
             return ImageUnmanaged.ReadError.InvalidData;
         }
 
-        const header_size = try reader.readInt(u32, .little);
-        try buffered_stream.seekBy(-@sizeOf(u32));
+        const header_size = try reader.peekInt(u32, .little);
 
         // Read info header
         self.info_header = switch (header_size) {
@@ -322,11 +317,7 @@ pub const BMP = struct {
         return pixels;
     }
 
-    pub fn write(self: BMP, stream: *ImageUnmanaged.Stream, pixels: color.PixelStorage) ImageUnmanaged.WriteError!void {
-        var buffered_stream = buffered_stream_source.bufferedStreamSourceWriter(stream);
-
-        const writer = buffered_stream.writer();
-
+    pub fn write(self: BMP, writer: *std.Io.Writer, pixels: color.PixelStorage) ImageUnmanaged.WriteError!void {
         try utils.writeStruct(writer, self.file_header, .little);
 
         switch (self.info_header) {
@@ -343,7 +334,7 @@ pub const BMP = struct {
 
         try writePixels(writer, pixels, self.width(), self.height());
 
-        try buffered_stream.flush();
+        try writer.flush();
     }
 
     fn findPixelFormat(bit_count: u32, compression: CompressionMethod) ImageUnmanaged.Error!PixelFormat {
@@ -356,7 +347,7 @@ pub const BMP = struct {
         }
     }
 
-    fn readPixels(reader: buffered_stream_source.DefaultBufferedStreamSourceReader.Reader, pixel_width: i32, pixel_height: i32, pixels: *color.PixelStorage) ImageUnmanaged.ReadError!void {
+    fn readPixels(reader: *std.Io.Reader, pixel_width: i32, pixel_height: i32, pixels: *color.PixelStorage) ImageUnmanaged.ReadError!void {
         return switch (pixels.*) {
             .bgr24 => {
                 return readPixelsInternal(pixels.bgr24, reader, pixel_width, pixel_height);
@@ -370,7 +361,7 @@ pub const BMP = struct {
         };
     }
 
-    fn readPixelsInternal(pixels: anytype, reader: buffered_stream_source.DefaultBufferedStreamSourceReader.Reader, pixel_width: i32, pixel_height: i32) ImageUnmanaged.ReadError!void {
+    fn readPixelsInternal(pixels: anytype, reader: *std.Io.Reader, pixel_width: i32, pixel_height: i32) ImageUnmanaged.ReadError!void {
         const ColorBufferType = @typeInfo(@TypeOf(pixels)).pointer.child;
 
         var x: i32 = 0;
@@ -385,7 +376,7 @@ pub const BMP = struct {
         }
     }
 
-    fn writePixels(writer: buffered_stream_source.DefaultBufferedStreamSourceWriter.Writer, pixels: color.PixelStorage, pixel_width: i32, pixel_height: i32) ImageUnmanaged.WriteError!void {
+    fn writePixels(writer: *std.Io.Writer, pixels: color.PixelStorage, pixel_width: i32, pixel_height: i32) ImageUnmanaged.WriteError!void {
         return switch (pixels) {
             .bgr24 => {
                 return writePixelsInternal(pixels.bgr24, writer, pixel_width, pixel_height);
@@ -399,7 +390,7 @@ pub const BMP = struct {
         };
     }
 
-    fn writePixelsInternal(pixels: anytype, writer: buffered_stream_source.DefaultBufferedStreamSourceWriter.Writer, pixel_width: i32, pixel_height: i32) ImageUnmanaged.WriteError!void {
+    fn writePixelsInternal(pixels: anytype, writer: *std.Io.Writer, pixel_width: i32, pixel_height: i32) ImageUnmanaged.WriteError!void {
         var x: i32 = 0;
         var y: i32 = pixel_height - 1;
         while (y >= 0) : (y -= 1) {

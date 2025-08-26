@@ -1,5 +1,5 @@
 const std = @import("std");
-pub const Stream = std.io.StreamSource;
+pub const Stream = std.io.Reader;
 
 const color = @import("color.zig");
 const FormatInterface = @import("FormatInterface.zig");
@@ -12,44 +12,44 @@ const utils = @import("utils.zig");
 
 const SupportedFormats = struct {
     pub const bmp = formats.bmp.BMP;
-    pub const farbfeld = formats.farbfeld.Farbfeld;
-    pub const gif = formats.gif.GIF;
-    pub const iff = formats.iff.IFF;
-    pub const jpeg = formats.jpeg.JPEG;
-    pub const pam = formats.pam.PAM;
-    pub const pbm = formats.netpbm.PBM;
-    pub const pcx = formats.pcx.PCX;
-    pub const pgm = formats.netpbm.PGM;
-    pub const png = formats.png.PNG;
-    pub const ppm = formats.netpbm.PPM;
-    pub const qoi = formats.qoi.QOI;
-    pub const ras = formats.ras.RAS;
-    pub const sgi = formats.sgi.SGI;
-    pub const tga = formats.tga.TGA;
-    pub const tiff = formats.tiff.TIFF;
-    pub const xbm = formats.xbm.XBM;
+    // pub const farbfeld = formats.farbfeld.Farbfeld;
+    // pub const gif = formats.gif.GIF;
+    // pub const iff = formats.iff.IFF;
+    // pub const jpeg = formats.jpeg.JPEG;
+    // pub const pam = formats.pam.PAM;
+    // pub const pbm = formats.netpbm.PBM;
+    // pub const pcx = formats.pcx.PCX;
+    // pub const pgm = formats.netpbm.PGM;
+    // pub const png = formats.png.PNG;
+    // pub const ppm = formats.netpbm.PPM;
+    // pub const qoi = formats.qoi.QOI;
+    // pub const ras = formats.ras.RAS;
+    // pub const sgi = formats.sgi.SGI;
+    // pub const tga = formats.tga.TGA;
+    // pub const tiff = formats.tiff.TIFF;
+    // pub const xbm = formats.xbm.XBM;
 };
 
 pub const Format = std.meta.DeclEnum(SupportedFormats);
 
 pub const EncoderOptions = union(Format) {
     bmp: SupportedFormats.bmp.EncoderOptions,
-    farbfeld: void,
-    gif: void,
-    iff: void,
-    jpeg: void,
-    pam: SupportedFormats.pam.EncoderOptions,
-    pbm: SupportedFormats.pbm.EncoderOptions,
-    pcx: SupportedFormats.pcx.EncoderOptions,
-    pgm: SupportedFormats.pgm.EncoderOptions,
-    png: SupportedFormats.png.EncoderOptions,
-    ppm: SupportedFormats.ppm.EncoderOptions,
-    qoi: SupportedFormats.qoi.EncoderOptions,
-    ras: void,
-    sgi: void,
-    tga: SupportedFormats.tga.EncoderOptions,
-    tiff: void,
-    xbm: void,
+    // farbfeld: void,
+    // gif: void,
+    // iff: void,
+    // jpeg: void,
+    // pam: SupportedFormats.pam.EncoderOptions,
+    // pbm: SupportedFormats.pbm.EncoderOptions,
+    // pcx: SupportedFormats.pcx.EncoderOptions,
+    // pgm: SupportedFormats.pgm.EncoderOptions,
+    // png: SupportedFormats.png.EncoderOptions,
+    // ppm: SupportedFormats.ppm.EncoderOptions,
+    // qoi: SupportedFormats.qoi.EncoderOptions,
+    // ras: void,
+    // sgi: void,
+    // tga: SupportedFormats.tga.EncoderOptions,
+    // tiff: void,
+    // xbm: void,
 };
 
 pub const Error = error{
@@ -59,15 +59,17 @@ pub const Error = error{
 pub const ReadError = Error ||
     std.mem.Allocator.Error ||
     utils.StructReadError ||
-    std.io.StreamSource.SeekError ||
-    std.io.StreamSource.GetSeekPosError ||
-    error{ EndOfStream, StreamTooLong, InvalidData };
+    std.Io.Reader.Error ||
+    // std.io.StreamSource.SeekError ||
+    // std.io.StreamSource.GetSeekPosError ||
+    error{ StreamTooLong, InvalidData };
 
 pub const WriteError = Error ||
     std.mem.Allocator.Error ||
-    std.io.StreamSource.WriteError ||
-    std.io.StreamSource.SeekError ||
-    std.io.StreamSource.GetSeekPosError ||
+    std.Io.Writer.Error ||
+    // std.io.StreamSource.WriteError ||
+    // std.io.StreamSource.SeekError ||
+    // std.io.StreamSource.GetSeekPosError ||
     std.fs.File.OpenError ||
     error{ EndOfStream, InvalidData, UnfinishedBits };
 
@@ -111,12 +113,12 @@ animation: Animation = .{},
 
 const ImageUnmanaged = @This();
 
-const FormatInteraceFnType = *const fn () FormatInterface;
+const FormatInterfaceFnType = *const fn () FormatInterface;
 
 const all_interface_funcs = blk: {
-    const all_formats_delcs = std.meta.declarations(SupportedFormats);
-    var result: []const FormatInteraceFnType = &[0]FormatInteraceFnType{};
-    for (all_formats_delcs) |decl| {
+    const all_formats_decls = std.meta.declarations(SupportedFormats);
+    var result: []const FormatInterfaceFnType = &[0]FormatInterfaceFnType{};
+    for (all_formats_decls) |decl| {
         const decl_value = @field(SupportedFormats, decl.name);
         const entry_type = @TypeOf(decl_value);
         if (entry_type == type) {
@@ -124,7 +126,7 @@ const all_interface_funcs = blk: {
             if (entry_type_info == .@"struct") {
                 for (entry_type_info.@"struct".decls) |struct_entry| {
                     if (std.mem.eql(u8, struct_entry.name, "formatInterface")) {
-                        result = result ++ [_]FormatInteraceFnType{
+                        result = result ++ [_]FormatInterfaceFnType{
                             @field(decl_value, struct_entry.name),
                         };
                         break;
@@ -152,14 +154,15 @@ pub fn detectFormatFromFilePath(file_path: []const u8) !Format {
 
 /// Detect which image format is used by the file
 pub fn detectFormatFromFile(file: *std.fs.File) !Format {
-    var stream_source = std.io.StreamSource{ .file = file.* };
-    return internalDetectFormat(&stream_source);
+    var buffer: [64]u8 = undefined;
+    var reader = file.reader(&buffer);
+    return internalDetectFormat(&reader.interface);
 }
 
 /// Detect which image format is used by the memory buffer
 pub fn detectFormatFromMemory(buffer: []const u8) !Format {
-    var stream_source = std.io.StreamSource{ .const_buffer = std.io.fixedBufferStream(buffer) };
-    return internalDetectFormat(&stream_source);
+    var reader = std.Io.Reader.fixed(buffer);
+    return internalDetectFormat(&reader);
 }
 
 /// Load an image from a file path
@@ -172,14 +175,15 @@ pub fn fromFilePath(allocator: std.mem.Allocator, file_path: []const u8) !ImageU
 
 /// Load an image from a standard library std.fs.File
 pub fn fromFile(allocator: std.mem.Allocator, file: *std.fs.File) !ImageUnmanaged {
-    var stream_source = std.io.StreamSource{ .file = file.* };
-    return internalRead(allocator, &stream_source);
+    var buffer: [64]u8 = undefined;
+    var reader = file.reader(&buffer);
+    return internalRead(allocator, &reader.interface);
 }
 
 /// Load an image from a memory buffer
 pub fn fromMemory(allocator: std.mem.Allocator, buffer: []const u8) !ImageUnmanaged {
-    var stream_source = std.io.StreamSource{ .const_buffer = std.io.fixedBufferStream(buffer) };
-    return internalRead(allocator, &stream_source);
+    var reader = std.Io.Reader.fixed(buffer);
+    return internalRead(allocator, &reader);
 }
 
 /// Create an ImageUnmanaged from a raw memory stream.
@@ -262,19 +266,18 @@ pub fn writeToFilePath(self: ImageUnmanaged, allocator: std.mem.Allocator, file_
 
 /// Write the image to an image format to the specified std.fs.File
 pub fn writeToFile(self: ImageUnmanaged, allocator: std.mem.Allocator, file: std.fs.File, encoder_options: EncoderOptions) WriteError!void {
-    var stream_source = std.io.StreamSource{ .file = file };
-
-    try self.internalWrite(allocator, &stream_source, encoder_options);
+    var buffer: [64]u8 = undefined;
+    var writer = file.writer(&buffer);
+    try self.internalWrite(allocator, &writer.interface, encoder_options);
 }
 
 /// Write the image to an image format in a memory buffer. The memory buffer is not grown
 /// for you so make sure you pass a large enough buffer.
 pub fn writeToMemory(self: ImageUnmanaged, allocator: std.mem.Allocator, write_buffer: []u8, encoder_options: EncoderOptions) WriteError![]u8 {
-    var stream_source = std.io.StreamSource{ .buffer = std.io.fixedBufferStream(write_buffer) };
+    var writer = std.Io.Writer.fixed(write_buffer);
+    try self.internalWrite(allocator, &writer, encoder_options);
 
-    try self.internalWrite(allocator, &stream_source, encoder_options);
-
-    return stream_source.buffer.getWritten();
+    return writer.buffered();
 }
 
 /// Convert the pixel format of the Image into another format.
@@ -297,7 +300,7 @@ pub fn convert(self: *ImageUnmanaged, allocator: std.mem.Allocator, destination_
 
 /// Convert the pixel format of the Image into another format.
 /// It will allocate another pixel storage for the destination and not free the old one.
-/// Ths is in the case the image doess not own the pixel data.
+/// Ths is in the case the image does not own the pixel data.
 ///
 /// For the conversion to the indexed formats, no dithering is done.
 pub fn convertNoFree(self: *ImageUnmanaged, allocator: std.mem.Allocator, destination_format: PixelFormat) ConvertError!void {
@@ -322,12 +325,11 @@ pub fn iterator(self: *const ImageUnmanaged) color.PixelStorageIterator {
     return color.PixelStorageIterator.init(&self.pixels);
 }
 
-fn internalDetectFormat(stream: *Stream) !Format {
-    for (all_interface_funcs, 0..) |intefaceFn, format_index| {
-        const formatInterface = intefaceFn();
+fn internalDetectFormat(reader: *std.Io.Reader) !Format {
+    for (all_interface_funcs, 0..) |interfaceFn, format_index| {
+        const formatInterface = interfaceFn();
 
-        try stream.seekTo(0);
-        const found = try formatInterface.formatDetect(stream);
+        const found = try formatInterface.formatDetect(reader);
         if (found) {
             return @enumFromInt(format_index);
         }
@@ -336,28 +338,32 @@ fn internalDetectFormat(stream: *Stream) !Format {
     return Error.Unsupported;
 }
 
-fn internalRead(allocator: std.mem.Allocator, stream: *Stream) !ImageUnmanaged {
-    const format_interface = try findImageInterfaceFromStream(stream);
+fn internalRead(allocator: std.mem.Allocator, reader: *std.Io.Reader) !ImageUnmanaged {
+    const format_interface = try findImageInterfaceFromStream(reader);
 
-    try stream.seekTo(0);
+    try reader.seekTo(0);
 
-    return try format_interface.readImage(allocator, stream);
+    return try format_interface.readImage(allocator, reader);
 }
 
-fn internalWrite(self: ImageUnmanaged, allocator: std.mem.Allocator, stream: *Stream, encoder_options: EncoderOptions) WriteError!void {
+fn internalWrite(
+    self: ImageUnmanaged,
+    allocator: std.mem.Allocator,
+    writer: *std.Io.Writer,
+    encoder_options: EncoderOptions,
+) WriteError!void {
     const image_format = std.meta.activeTag(encoder_options);
 
     var format_interface = try findImageInterfaceFromImageFormat(image_format);
 
-    try format_interface.writeImage(allocator, stream, self, encoder_options);
+    try format_interface.writeImage(allocator, writer, self, encoder_options);
 }
 
-fn findImageInterfaceFromStream(stream: *Stream) !FormatInterface {
-    for (all_interface_funcs) |intefaceFn| {
-        const formatInterface = intefaceFn();
+fn findImageInterfaceFromStream(reader: *std.Io.Reader) !FormatInterface {
+    for (all_interface_funcs) |interfaceFn| {
+        const formatInterface = interfaceFn();
 
-        try stream.seekTo(0);
-        const found = try formatInterface.formatDetect(stream);
+        const found = try formatInterface.formatDetect(reader);
         if (found) {
             return formatInterface;
         }

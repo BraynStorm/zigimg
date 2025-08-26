@@ -250,9 +250,8 @@ fn Netpbm(comptime header_numbers: []const u8, comptime supported_format: Format
             };
         }
 
-        pub fn formatDetect(stream: *ImageUnmanaged.Stream) ImageReadError!bool {
-            var magic_number_buffer: [2]u8 = undefined;
-            _ = try stream.read(magic_number_buffer[0..]);
+        pub fn formatDetect(reader: *std.Io.Reader) ImageReadError!bool {
+            const magic_number_buffer = try reader.takeArray(2);
 
             if (magic_number_buffer[0] != 'P') {
                 return false;
@@ -270,13 +269,13 @@ fn Netpbm(comptime header_numbers: []const u8, comptime supported_format: Format
             return found;
         }
 
-        pub fn readImage(allocator: Allocator, stream: *ImageUnmanaged.Stream) ImageReadError!ImageUnmanaged {
+        pub fn readImage(allocator: Allocator, reader: *std.Io.Reader) ImageReadError!ImageUnmanaged {
             var result = ImageUnmanaged{};
             errdefer result.deinit(allocator);
 
             var netpbm_file = Self{};
 
-            const pixels = try netpbm_file.read(allocator, stream);
+            const pixels = try netpbm_file.read(allocator, reader);
 
             result.width = netpbm_file.header.width;
             result.height = netpbm_file.header.height;
@@ -285,7 +284,7 @@ fn Netpbm(comptime header_numbers: []const u8, comptime supported_format: Format
             return result;
         }
 
-        pub fn writeImage(allocator: Allocator, write_stream: *ImageUnmanaged.Stream, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
+        pub fn writeImage(allocator: Allocator, writer: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
             _ = allocator;
 
             var netpbm_file = Self{};
@@ -311,7 +310,7 @@ fn Netpbm(comptime header_numbers: []const u8, comptime supported_format: Format
                 else => std.math.maxInt(u8),
             };
 
-            try netpbm_file.write(write_stream, image.pixels);
+            try netpbm_file.write(writer, image.pixels);
         }
 
         pub fn pixelFormat(self: Self) ImageReadError!PixelFormat {

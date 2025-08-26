@@ -55,20 +55,17 @@ pub const PNG = struct {
         };
     }
 
-    pub fn formatDetect(stream: *ImageUnmanaged.Stream) ImageReadError!bool {
-        var magic_buffer: [types.magic_header.len]u8 = undefined;
-
-        _ = try stream.reader().readAll(magic_buffer[0..]);
-
-        return std.mem.eql(u8, magic_buffer[0..], types.magic_header[0..]);
+    pub fn formatDetect(r: *std.Io.Reader) ImageReadError!bool {
+        const magic_buffer = try r.takeArray(types.magic_header.len);
+        return std.mem.eql(u8, magic_buffer, types.magic_header);
     }
 
-    pub fn readImage(allocator: std.mem.Allocator, stream: *ImageUnmanaged.Stream) ImageReadError!ImageUnmanaged {
+    pub fn readImage(allocator: std.mem.Allocator, r: *std.Io.Reader) ImageReadError!ImageUnmanaged {
         var options = DefaultOptions.init(.{});
-        return load(stream, allocator, options.get());
+        return load(r, allocator, options.get());
     }
 
-    pub fn writeImage(allocator: std.mem.Allocator, write_stream: *ImageUnmanaged.Stream, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
+    pub fn writeImage(allocator: std.mem.Allocator, write_stream: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
         const options = encoder_options.png;
 
         try ensureWritable(image);
@@ -88,7 +85,7 @@ pub const PNG = struct {
         try write(allocator, write_stream, image.pixels, header, options.filter_choice);
     }
 
-    pub fn write(allocator: std.mem.Allocator, write_stream: *ImageUnmanaged.Stream, pixels: color.PixelStorage, header: HeaderData, filter_choice: filter.FilterChoice) ImageWriteError!void {
+    pub fn write(allocator: std.mem.Allocator, write_stream: *std.Io.Writer, pixels: color.PixelStorage, header: HeaderData, filter_choice: filter.FilterChoice) ImageWriteError!void {
         var buffered_stream = buffered_stream_source.bufferedStreamSourceWriter(write_stream);
 
         if (header.interlace_method != .none)

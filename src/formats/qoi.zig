@@ -121,21 +121,18 @@ pub const QOI = struct {
         };
     }
 
-    pub fn formatDetect(stream: *ImageUnmanaged.Stream) ImageReadError!bool {
-        var magic_buffer: [Header.correct_magic.len]u8 = undefined;
-
-        _ = try stream.read(magic_buffer[0..]);
-
-        return std.mem.eql(u8, magic_buffer[0..], Header.correct_magic[0..]);
+    pub fn formatDetect(reader: *std.Io.Reader) ImageReadError!bool {
+        const magic_buffer = try reader.takeArray(Header.correct_magic.len);
+        return std.mem.eql(u8, magic_buffer, &Header.correct_magic);
     }
 
-    pub fn readImage(allocator: Allocator, stream: *ImageUnmanaged.Stream) ImageReadError!ImageUnmanaged {
+    pub fn readImage(allocator: Allocator, reader: *std.Io.Reader) ImageReadError!ImageUnmanaged {
         var result = ImageUnmanaged{};
         errdefer result.deinit(allocator);
 
         var qoi = Self{};
 
-        const pixels = try qoi.read(allocator, stream);
+        const pixels = try qoi.read(allocator, reader);
 
         result.width = qoi.width();
         result.height = qoi.height();
@@ -144,7 +141,7 @@ pub const QOI = struct {
         return result;
     }
 
-    pub fn writeImage(allocator: Allocator, write_stream: *ImageUnmanaged.Stream, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
+    pub fn writeImage(allocator: Allocator, writer: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
         _ = allocator;
 
         var qoi = Self{};
@@ -164,7 +161,7 @@ pub const QOI = struct {
             },
         }
 
-        try qoi.write(write_stream, image.pixels);
+        try qoi.write(writer, image.pixels);
     }
 
     pub fn width(self: Self) usize {
@@ -182,16 +179,10 @@ pub const QOI = struct {
         };
     }
 
-    pub fn read(self: *Self, allocator: Allocator, stream: *ImageUnmanaged.Stream) ImageReadError!color.PixelStorage {
-        var buffered_stream = buffered_stream_source.bufferedStreamSourceReader(stream);
+    pub fn read(self: *Self, allocator: Allocator, reader: *std.Io.Reader) ImageReadError!color.PixelStorage {
+        const magic_buffer = try reader.takeArray(Header.correct_magic.len);
 
-        var magic_buffer: [Header.correct_magic.len]u8 = undefined;
-
-        const reader = buffered_stream.reader();
-
-        _ = try reader.readAll(magic_buffer[0..]);
-
-        if (!std.mem.eql(u8, magic_buffer[0..], Header.correct_magic[0..])) {
+        if (!std.mem.eql(u8, magic_buffer, &Header.correct_magic)) {
             return ImageReadError.InvalidData;
         }
 
@@ -209,20 +200,20 @@ pub const QOI = struct {
         const pixels_size: usize = @as(usize, self.header.width) * @as(usize, self.header.height);
 
         while (index < pixels_size) {
-            const byte = try reader.readByte();
+            const byte = try reader.takeByte();
 
             var new_color = current_color;
             var count: usize = 1;
 
             if (byte == 0b11111110) { // QOI_OP_RGB
-                new_color.r = try reader.readByte();
-                new_color.g = try reader.readByte();
-                new_color.b = try reader.readByte();
+                new_color.r = try reader.takeByte();
+                new_color.g = try reader.takeByte();
+                new_color.b = try reader.takeByte();
             } else if (byte == 0b11111111) { // QOI_OP_RGBA
-                new_color.r = try reader.readByte();
-                new_color.g = try reader.readByte();
-                new_color.b = try reader.readByte();
-                new_color.a = try reader.readByte();
+                new_color.r = try reader.takeByte();
+                new_color.g = try reader.takeByte();
+                new_color.b = try reader.takeByte();
+                new_color.a = try reader.takeByte();
             } else if (hasPrefix(byte, u2, 0b00)) { // QOI_OP_INDEX
                 const color_index: u6 = @truncate(byte);
                 new_color = color_lut[color_index];
@@ -237,7 +228,7 @@ pub const QOI = struct {
             } else if (hasPrefix(byte, u2, 0b10)) { // QOI_OP_LUMA
                 const diff_g = unmapRange6(byte);
 
-                const diff_rg_rb = try reader.readByte();
+                const diff_rg_rb = try reader.takeByte();
 
                 const diff_rg = unmapRange4(diff_rg_rb >> 4);
                 const diff_rb = unmapRange4(diff_rg_rb >> 0);
@@ -283,9 +274,7 @@ pub const QOI = struct {
         return pixels;
     }
 
-    pub fn write(self: Self, stream: *ImageUnmanaged.Stream, pixels: color.PixelStorage) ImageWriteError!void {
-        var buffered_stream = buffered_stream_source.bufferedStreamSourceWriter(stream);
-        const writer = buffered_stream.writer();
+    pub fn write(self: Self, writer: *std.Io.Writer, pixels: color.PixelStorage) ImageWriteError!void {
         try writer.writeAll(&self.header.encode());
 
         switch (pixels) {
@@ -311,10 +300,10 @@ pub const QOI = struct {
             0x01,
         });
 
-        try buffered_stream.flush();
+        try writer.flush();
     }
 
-    fn writeData(writer: buffered_stream_source.DefaultBufferedStreamSourceWriter.Writer, pixels_data: anytype) ImageWriteError!void {
+    fn writeData(writer: *std.Io.Writer, pixels_data: anytype) ImageWriteError!void {
         var color_lut = std.mem.zeroes([64]QoiColor);
 
         var previous_pixel = QoiColor{ .r = 0, .g = 0, .b = 0, .a = 0xFF };

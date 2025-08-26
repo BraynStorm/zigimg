@@ -225,10 +225,10 @@ test "PCX RLE Fast encoder" {
     const uncompressed_data = [_]u8{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 64, 64, 2, 2, 2, 2, 2, 215, 215, 215, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 200, 200, 200, 200, 210, 210 };
     const compressed_data = [_]u8{ 0xC9, 0x01, 0xC2, 0x40, 0xC5, 0x02, 0xC3, 0xD7, 0xCA, 0x03, 0xC4, 0xC8, 0xC2, 0xD2 };
 
-    var result_list = std.ArrayList(u8).init(std.testing.allocator);
-    defer result_list.deinit();
+    var result_list = std.ArrayList(u8).empty;
+    defer result_list.deinit(std.testing.allocator);
 
-    const writer = result_list.writer();
+    const writer = result_list.writer(std.testing.allocator);
 
     try RLEFastEncoder.encode(uncompressed_data[0..], writer);
 
@@ -242,10 +242,10 @@ test "PCX RLE Fast encoder should encore more than 63 bytes similar" {
 
     const compressed_data = [_]u8{ 0xFF, 0x45, 0x45, 0x45, 0xC4, 0x1 };
 
-    var result_list = std.ArrayList(u8).init(std.testing.allocator);
-    defer result_list.deinit();
+    var result_list = std.ArrayList(u8).empty;
+    defer result_list.deinit(std.testing.allocator);
 
-    const writer = result_list.writer();
+    const writer = result_list.writer(std.testing.allocator);
 
     try RLEFastEncoder.encode(uncompressed_data[0..], writer);
 
@@ -305,22 +305,21 @@ pub const PCX = struct {
         };
     }
 
-    pub fn formatDetect(stream: *ImageUnmanaged.Stream) ImageReadError!bool {
-        var magic_number_bufffer: [2]u8 = undefined;
-        _ = try stream.read(magic_number_bufffer[0..]);
+    pub fn formatDetect(stream: *std.Io.Reader) ImageReadError!bool {
+        const magic_number_buffer = try stream.takeArray(2);
 
-        if (magic_number_bufffer[0] != MagicHeader) {
+        if (magic_number_buffer[0] != MagicHeader) {
             return false;
         }
 
-        if (magic_number_bufffer[1] > Version) {
+        if (magic_number_buffer[1] > Version) {
             return false;
         }
 
         return true;
     }
 
-    pub fn readImage(allocator: Allocator, stream: *ImageUnmanaged.Stream) ImageReadError!ImageUnmanaged {
+    pub fn readImage(allocator: Allocator, stream: *std.Io.Reader) ImageReadError!ImageUnmanaged {
         var result = ImageUnmanaged{};
         errdefer result.deinit(allocator);
 
@@ -335,7 +334,7 @@ pub const PCX = struct {
         return result;
     }
 
-    pub fn writeImage(allocator: Allocator, stream: *ImageUnmanaged.Stream, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
+    pub fn writeImage(allocator: Allocator, writer: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
         _ = allocator;
         _ = encoder_options;
 
@@ -379,7 +378,7 @@ pub const PCX = struct {
         // Add one if the result is a odd number
         pcx.header.stride += (pcx.header.stride & 0x1);
 
-        try pcx.write(stream, image.pixels);
+        try pcx.write(writer, image.pixels);
     }
 
     pub fn pixelFormat(self: PCX) ImageReadError!PixelFormat {
@@ -543,7 +542,7 @@ pub const PCX = struct {
         return pixels;
     }
 
-    pub fn write(self: PCX, stream: *ImageUnmanaged.Stream, pixels: color.PixelStorage) ImageUnmanaged.WriteError!void {
+    pub fn write(self: PCX, writer: *std.Io.Writer, pixels: color.PixelStorage) ImageUnmanaged.WriteError!void {
         switch (pixels) {
             .indexed1,
             .indexed4,
@@ -556,10 +555,6 @@ pub const PCX = struct {
                 return ImageWriteError.Unsupported;
             },
         }
-
-        var buffered_stream = buffered_stream_source.bufferedStreamSourceWriter(stream);
-
-        const writer = buffered_stream.writer();
 
         try utils.writeStruct(writer, self.header, .little);
 
@@ -595,7 +590,7 @@ pub const PCX = struct {
             },
         }
 
-        try buffered_stream.flush();
+        try writer.flush();
     }
 
     fn fillPalette(self: *PCX, palette: []const color.Rgba32) void {

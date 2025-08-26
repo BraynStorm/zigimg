@@ -463,13 +463,11 @@ test "TGA RLE SIMD u8 (bytes) encoder" {
 
     const Test = struct {
         pub fn do(comptime vector_length: comptime_int) !void {
-            var result_list = std.ArrayList(u8).init(std.testing.allocator);
-            defer result_list.deinit();
+            var writer = std.Io.Writer.Allocating.init(std.testing.allocator);
+            defer writer.deinit();
 
-            const writer = result_list.writer();
-
-            try RunLengthSIMDEncoder(u8, .{ .vector_length = vector_length }).encode(uncompressed_data[0..], writer);
-            try std.testing.expectEqualSlices(u8, compressed_data[0..], result_list.items);
+            try RunLengthSIMDEncoder(u8, .{ .vector_length = vector_length }).encode(uncompressed_data[0..], &writer.writer);
+            try std.testing.expectEqualSlices(u8, compressed_data[0..], writer.writer.buffered());
         }
     };
 
@@ -488,10 +486,10 @@ test "TGA RLE SIMD u8 (bytes) encoder should encore more than 128 bytes similar"
 
     const Test = struct {
         pub fn do(comptime vector_length: comptime_int) !void {
-            var result_list = std.ArrayList(u8).init(std.testing.allocator);
-            defer result_list.deinit();
+            var result_list = std.ArrayList(u8).empty;
+            defer result_list.deinit(std.testing.allocator);
 
-            const writer = result_list.writer();
+            const writer = result_list.writer(std.testing.allocator);
 
             try RunLengthSIMDEncoder(u8, .{ .vector_length = vector_length }).encode(uncompressed_data[0..], writer);
 
@@ -513,10 +511,10 @@ test "TGA RLE SIMD u16 encoder" {
 
     const Test = struct {
         pub fn do(comptime vector_length: comptime_int, compressed_data_param: []const u8, uncompressed_data_param: []const u8) !void {
-            var result_list = std.ArrayList(u8).init(std.testing.allocator);
-            defer result_list.deinit();
+            var result_list = std.ArrayList(u8).empty;
+            defer result_list.deinit(std.testing.allocator);
 
-            const writer = result_list.writer();
+            const writer = result_list.writer(std.testing.allocator);
 
             try RunLengthSIMDEncoder(u16, .{ .vector_length = vector_length }).encode(uncompressed_data_param[0..], writer);
 
@@ -538,10 +536,10 @@ test "TGA RLE SIMD u32 encoder" {
 
     const Test = struct {
         pub fn do(comptime vector_length: comptime_int, compressed_data_param: []const u8, uncompressed_data_param: []const u8) !void {
-            var result_list = std.ArrayList(u8).init(std.testing.allocator);
-            defer result_list.deinit();
+            var result_list = std.ArrayList(u8).empty;
+            defer result_list.deinit(std.testing.allocator);
 
-            const writer = result_list.writer();
+            const writer = result_list.writer(std.testing.allocator);
 
             try RunLengthSIMDEncoder(u32, .{ .vector_length = vector_length }).encode(uncompressed_data_param[0..], writer);
 
@@ -578,12 +576,12 @@ test "TGA RLE simple u24 encoder" {
         0x00, 0x07, 0x08, 0x09,
     };
 
-    var result_list = std.ArrayList(u8).init(std.testing.allocator);
-    defer result_list.deinit();
+    var result_list = std.ArrayList(u8).empty;
+    defer result_list.deinit(std.testing.allocator);
 
-    const writer = result_list.writer();
+    var writer = result_list.writer(std.testing.allocator);
 
-    try RunLengthSimpleEncoder(u24).encode(uncompressed_data[0..], writer);
+    try RunLengthSimpleEncoder(u24).encode(uncompressed_data[0..], &writer);
 
     try std.testing.expectEqualSlices(u8, compressed_data[0..], result_list.items);
 }

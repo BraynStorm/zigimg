@@ -134,11 +134,9 @@ const IDatChunksReader = struct {
 const IDATReader = std.io.Reader(*IDatChunksReader, ImageUnmanaged.ReadError, IDatChunksReader.read);
 
 /// Loads only the png header from the stream. Useful when you only metadata.
-pub fn loadHeader(stream: *ImageUnmanaged.Stream) ImageUnmanaged.ReadError!png.HeaderData {
-    var reader = stream.reader();
-    var signature: [png.magic_header.len]u8 = undefined;
-    try reader.readNoEof(signature[0..]);
-    if (!mem.eql(u8, signature[0..], png.magic_header)) {
+pub fn loadHeader(reader: *std.Io.Reader) ImageUnmanaged.ReadError!png.HeaderData {
+    const signature = try reader.takeArray(png.magic_header.len);
+    if (!mem.eql(u8, &signature, png.magic_header)) {
         return ImageUnmanaged.ReadError.InvalidData;
     }
 
@@ -171,14 +169,14 @@ pub fn loadHeader(stream: *ImageUnmanaged.Stream) ImageUnmanaged.ReadError!png.H
 /// 1. tRNS processor that decodes the tRNS chunk if it exists into an alpha channel
 /// 2. PLTE processor that decodes the indexed image with a palette into a RGB image.
 /// If you pass DefaultOptions.init(.{}) it will only use the tRNS processor.
-pub fn load(stream: *ImageUnmanaged.Stream, allocator: Allocator, options: ReaderOptions) ImageUnmanaged.ReadError!ImageUnmanaged {
-    const header = try loadHeader(stream);
+pub fn load(reader: *std.Io.Reader, allocator: Allocator, options: ReaderOptions) ImageUnmanaged.ReadError!ImageUnmanaged {
+    const header = try loadHeader(reader);
     var result = ImageUnmanaged{};
     errdefer result.deinit(allocator);
 
     result.width = header.width;
     result.height = header.height;
-    result.pixels = try loadWithHeader(stream, &header, allocator, options);
+    result.pixels = try loadWithHeader(reader, &header, allocator, options);
 
     return result;
 }

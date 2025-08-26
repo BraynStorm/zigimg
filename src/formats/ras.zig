@@ -74,12 +74,9 @@ pub const RAS = struct {
         };
     }
 
-    pub fn formatDetect(stream: *ImageUnmanaged.Stream) !bool {
-        var magic_buffer: [Header.ras_magic_number.len]u8 = undefined;
-
-        _ = try stream.read(magic_buffer[0..]);
-
-        return std.mem.eql(u8, magic_buffer[0..], Header.ras_magic_number[0..]);
+    pub fn formatDetect(reader: *std.Io.Reader) !bool {
+        const magic_buffer = try reader.takeArray(Header.ras_magic_number.len);
+        return std.mem.eql(u8, magic_buffer, &Header.ras_magic_number);
     }
 
     pub fn pixelFormat(self: *RAS) ImageReadError!PixelFormat {
@@ -93,13 +90,13 @@ pub const RAS = struct {
         }
     }
 
-    pub fn readImage(allocator: std.mem.Allocator, stream: *ImageUnmanaged.Stream) ImageUnmanaged.ReadError!ImageUnmanaged {
+    pub fn readImage(allocator: std.mem.Allocator, reader: *std.Io.Reader) ImageUnmanaged.ReadError!ImageUnmanaged {
         var result = ImageUnmanaged{};
         errdefer result.deinit(allocator);
 
         var ras = RAS{};
 
-        const pixels = try ras.read(stream, allocator);
+        const pixels = try ras.read(reader, allocator);
 
         result.pixels = pixels;
         result.width = ras.width();
@@ -108,24 +105,25 @@ pub const RAS = struct {
         return result;
     }
 
-    pub fn uncompressBitmap(self: *RAS, stream: *ImageUnmanaged.Stream, buffer: []u8) !void {
-        const reader = stream.reader();
-
+    pub fn uncompressBitmap(self: *RAS, reader: *std.Io.Reader, buffer: []u8) !void {
         switch (self.header.type) {
             // no compression for these types
-            .old, .standard, .rgb => _ = try reader.readAll(buffer[0..]),
+            .old, .standard, .rgb => {
+                var writer = std.Io.Writer.fixed(buffer);
+                _ = try reader.streamExact(&writer, buffer.len);
+            },
             // rle encoding with x80 trigger byte
             .byte_encoded => {
                 var position: usize = 0;
                 while (position < buffer.len) {
-                    const flag: u8 = try reader.readByte();
+                    const flag: u8 = try reader.takeByte();
                     if (flag == 0x80) {
-                        const count: u16 = try reader.readByte();
+                        const count: u16 = try reader.takeByte();
                         if (count == 0) {
                             buffer[position] = flag;
                             position += 1;
                         } else {
-                            const run = try reader.readByte();
+                            const run = try reader.takeByte();
                             for (0..count + 1) |_| {
                                 buffer[position] = run;
                                 position += 1;
@@ -143,8 +141,7 @@ pub const RAS = struct {
         }
     }
 
-    pub fn readPalette(self: *RAS, stream: *ImageUnmanaged.Stream, allocator: std.mem.Allocator) !void {
-        const reader = stream.reader();
+    pub fn readPalette(self: *RAS, reader: *std.Io.Reader, allocator: std.mem.Allocator) ImageUnmanaged.ReadError!void {
         const header = self.header;
         switch (header.color_map_type) {
             .rgb_color_map => {
@@ -153,7 +150,11 @@ pub const RAS = struct {
                 const palette = self.palette.data;
                 const buffer: []u8 = try allocator.alloc(u8, header.color_map_length);
                 defer allocator.free(buffer);
-                _ = try reader.readAll(buffer);
+                var writer = std.Io.Writer.fixed(buffer);
+                _ = reader.stream(&writer, .limited(buffer.len)) catch |e| switch (e) {
+                    error.WriteFailed => unreachable,
+                    else => return e,
+                };
 
                 for (0..colors) |index| {
                     // palette components are stored in a separate plane
@@ -164,12 +165,10 @@ pub const RAS = struct {
         }
     }
 
-    pub fn read(self: *RAS, stream: *ImageUnmanaged.Stream, allocator: std.mem.Allocator) ImageUnmanaged.ReadError!color.PixelStorage {
-        if (!try formatDetect(stream)) {
+    pub fn read(self: *RAS, reader: *std.Io.Reader, allocator: std.mem.Allocator) ImageUnmanaged.ReadError!color.PixelStorage {
+        if (!try formatDetect(reader)) {
             return ImageReadError.InvalidData;
         }
-
-        const reader = stream.reader();
 
         self.header = utils.readStruct(reader, Header, .big) catch return ImageReadError.InvalidData;
 
@@ -179,7 +178,7 @@ pub const RAS = struct {
         const image_height = self.height();
 
         if (self.header.color_map_type != .no_color_map and self.header.color_map_length > 0) {
-            try self.readPalette(stream, allocator);
+            try self.readPalette(reader, allocator);
         }
 
         var pixels = try color.PixelStorage.init(allocator, pixel_format, image_width * image_height);
@@ -200,7 +199,7 @@ pub const RAS = struct {
         const buffer: []u8 = try allocator.alloc(u8, buffer_size);
         defer allocator.free(buffer);
 
-        try self.uncompressBitmap(stream, buffer);
+        try self.uncompressBitmap(reader, buffer);
 
         switch (pixels) {
             .grayscale1 => |*storage| {
@@ -252,9 +251,9 @@ pub const RAS = struct {
         return pixels;
     }
 
-    pub fn writeImage(allocator: std.mem.Allocator, write_stream: *ImageUnmanaged.Stream, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageUnmanaged.Stream.WriteError!void {
+    pub fn writeImage(allocator: std.mem.Allocator, writer: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageUnmanaged.WriteError!void {
         _ = allocator;
-        _ = write_stream;
+        _ = writer;
         _ = image;
         _ = encoder_options;
     }

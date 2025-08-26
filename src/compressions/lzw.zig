@@ -46,8 +46,8 @@ pub fn Decoder(comptime endian: std.builtin.Endian) type {
             self.dictionary.deinit();
         }
 
-        pub fn decode(self: *Self, reader: Image.Stream.Reader, writer: anytype) !void {
-            var bit_reader = std.io.bitReader(endian, reader);
+        pub fn decode(self: *Self, reader: *std.Io.Reader, writer: anytype) !void {
+            var bit_reader = reader;
 
             var bits_to_read = self.code_size + 1;
 
@@ -161,21 +161,16 @@ pub fn Decoder(comptime endian: std.builtin.Endian) type {
 test "Should decode a simple LZW little-endian stream" {
     const initial_code_size = 2;
     const test_data = [_]u8{ 0x4c, 0x01 };
-
-    var reader = Image.Stream{
-        .const_buffer = std.io.fixedBufferStream(&test_data),
-    };
+    var reader = std.Io.Reader.fixed(&test_data);
 
     var out_data_storage: [256]u8 = undefined;
-    var out_data_buffer = Image.Stream{
-        .buffer = std.io.fixedBufferStream(&out_data_storage),
-    };
+    var writer = std.Io.Writer.fixed(&out_data_storage);
 
     var lzw = try Decoder(.little).init(std.testing.allocator, initial_code_size, 0);
     defer lzw.deinit();
 
-    try lzw.decode(reader.reader(), out_data_buffer.writer());
+    try lzw.decode(&reader, &writer);
 
-    try std.testing.expectEqual(@as(usize, 1), out_data_buffer.buffer.pos);
+    try std.testing.expectEqual(@as(usize, 1), writer.buffered().len);
     try std.testing.expectEqual(@as(u8, 1), out_data_storage[0]);
 }

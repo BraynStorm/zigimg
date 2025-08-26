@@ -83,12 +83,9 @@ pub const SGI = struct {
         };
     }
 
-    pub fn formatDetect(stream: *ImageUnmanaged.Stream) !bool {
-        var magic_buffer: [Header.magic_number.len]u8 = undefined;
-
-        _ = try stream.read(magic_buffer[0..]);
-
-        return std.mem.eql(u8, magic_buffer[0..], Header.magic_number[0..]);
+    pub fn formatDetect(reader: *std.Io.Reader) !bool {
+        const magic_buffer = try reader.takeArray(Header.magic_number.len);
+        return std.mem.eql(u8, magic_buffer, &Header.magic_number);
     }
 
     pub fn pixelFormat(self: *SGI) ImageReadError!PixelFormat {
@@ -109,20 +106,20 @@ pub const SGI = struct {
         }
     }
 
-    pub fn writeImage(allocator: std.mem.Allocator, write_stream: *ImageUnmanaged.Stream, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageUnmanaged.Stream.WriteError!void {
+    pub fn writeImage(allocator: std.mem.Allocator, writer: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageUnmanaged.WriteError!void {
         _ = allocator;
-        _ = write_stream;
+        _ = writer;
         _ = image;
         _ = encoder_options;
     }
 
-    pub fn readImage(allocator: std.mem.Allocator, stream: *ImageUnmanaged.Stream) ImageUnmanaged.ReadError!ImageUnmanaged {
+    pub fn readImage(allocator: std.mem.Allocator, reader: *std.Io.Reader) ImageUnmanaged.ReadError!ImageUnmanaged {
         var result = ImageUnmanaged{};
         errdefer result.deinit(allocator);
 
         var sgi = SGI{};
 
-        const pixels = try sgi.read(stream, allocator);
+        const pixels = try sgi.read(reader, allocator);
 
         result.pixels = pixels;
         result.width = sgi.width();
@@ -131,11 +128,12 @@ pub const SGI = struct {
         return result;
     }
 
-    pub fn uncompressBitmap(self: *SGI, stream: *ImageUnmanaged.Stream, buffer: []u8, allocator: std.mem.Allocator) !void {
-        const reader = stream.reader();
-
+    pub fn uncompressBitmap(self: *SGI, reader: *std.Io.Reader, buffer: []u8, allocator: std.mem.Allocator) !void {
         switch (self.header.compression) {
-            .uncompressed => _ = try reader.readAll(buffer[0..]),
+            .uncompressed => {
+                var writer = std.Io.Writer.fixed(buffer);
+                _ = try reader.streamExact(&writer);
+            },
             .rle => {
                 const image_width = self.width();
                 const image_height = self.height();
@@ -150,10 +148,13 @@ pub const SGI = struct {
 
                 const sizes: []u32 = @as(*const []u32, @ptrCast(&tables_buffer[self.header.y_size * self.header.z_size * 4 ..])).*[0 .. self.header.y_size * self.header.z_size];
 
+                //TODO: I'm up to here for now. Try using an "unbounded" allocating writer and stream() to it, instead
+                // of calculating the end?
+
                 // then read compressed_data that's following the tables
                 const data_buffer: []u8 = try allocator.alloc(
                     u8,
-                    std.math.cast(usize, try stream.getEndPos() - try stream.getPos()) orelse return ImageReadError.StreamTooLong,
+                    std.math.cast(usize, try reader.getEndPos() - try reader.getPos()) orelse return ImageReadError.StreamTooLong,
                 );
                 defer allocator.free(data_buffer);
 
@@ -230,12 +231,10 @@ pub const SGI = struct {
         }
     }
 
-    pub fn read(self: *SGI, stream: *ImageUnmanaged.Stream, allocator: std.mem.Allocator) ImageUnmanaged.ReadError!color.PixelStorage {
-        if (!try formatDetect(stream)) {
+    pub fn read(self: *SGI, reader: *std.Io.Reader, allocator: std.mem.Allocator) ImageUnmanaged.ReadError!color.PixelStorage {
+        if (!try formatDetect(reader)) {
             return ImageReadError.InvalidData;
         }
-
-        const reader = stream.reader();
 
         self.header = utils.readStruct(reader, Header, .big) catch return ImageReadError.InvalidData;
 
@@ -253,7 +252,7 @@ pub const SGI = struct {
         const buffer: []u8 = try allocator.alloc(u8, buffer_size);
         defer allocator.free(buffer);
 
-        try self.uncompressBitmap(stream, buffer, allocator);
+        try self.uncompressBitmap(reader, buffer, allocator);
 
         // channel_size in pixels, not in bytes
         const channel_size = image_height * image_width;

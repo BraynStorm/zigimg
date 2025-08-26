@@ -10,11 +10,12 @@ test "Should error on non TIFF images" {
     const file = try helpers.testOpenFile(helpers.fixtures_path ++ "bmp/simple_v4.bmp");
     defer file.close();
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
     var sgi_file = tiff.TIFF{};
 
-    const invalid_file = sgi_file.read(&stream_source, helpers.zigimg_test_allocator);
+    const invalid_file = sgi_file.read(&reader.interface, helpers.zigimg_test_allocator);
     try helpers.expectError(invalid_file, Image.ReadError.InvalidData);
 }
 
@@ -24,9 +25,10 @@ test "TIFF/LE monochrome black uncompressed" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 640);
@@ -44,9 +46,10 @@ test "TIFF/LE grayscale8 uncompressed" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -65,9 +68,10 @@ test "TIFF/LE 8-bit with colormap uncompressed" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -90,9 +94,10 @@ test "TIFF/LE 24-bit uncompressed" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 664);
@@ -117,9 +122,10 @@ test "TIFF/BE rgb24 gray single strip uncompressed" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -144,9 +150,10 @@ test "TIFF/BE rgb24 color single strip uncompressed" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -171,9 +178,10 @@ test "TIFF/BE 24-bit uncompressed" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 664);
@@ -198,9 +206,10 @@ test "TIFF/LE RGBA uncompressed" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 32);
@@ -221,9 +230,10 @@ test "TIFF/LE monochrome black packbits" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 640);
@@ -241,9 +251,10 @@ test "TIFF/LE grayscale8 packbits" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -262,9 +273,10 @@ test "TIFF/LE 8-bit with colormap packbits" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -287,9 +299,10 @@ test "TIFF/LE 24-bit packbits" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 664);
@@ -314,9 +327,10 @@ test "TIFF/LE RGBA packbits" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 32);
@@ -337,9 +351,10 @@ test "TIFF/LE monochrome black CCITT" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 400);
@@ -356,9 +371,10 @@ test "TIFF/LE monochrome black LZW" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 640);
@@ -376,9 +392,10 @@ test "TIFF/LE grayscale8 LZW" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -397,9 +414,10 @@ test "TIFF/LE 8-bit with colormap LZW" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -422,9 +440,10 @@ test "TIFF/LE 24-bit LZW" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 664);
@@ -449,9 +468,10 @@ test "TIFF/LE RGBA LZW" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 32);
@@ -472,9 +492,10 @@ test "TIFF/LE monochrome black Deflate" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 640);
@@ -492,9 +513,10 @@ test "TIFF/LE grayscale8 Deflate" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -513,9 +535,10 @@ test "TIFF/LE 8-bit with colormap Deflate" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 128);
@@ -538,9 +561,10 @@ test "TIFF/LE 24-bit Deflate" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 664);
@@ -565,9 +589,10 @@ test "TIFF/LE RGBA Deflate" {
 
     var the_bitmap = tiff.TIFF{};
 
-    var stream_source = std.io.StreamSource{ .file = file };
+    var buf: [1024]u8 = undefined;
+    var reader = file.reader(&buf);
 
-    const pixels = try the_bitmap.read(&stream_source, helpers.zigimg_test_allocator);
+    const pixels = try the_bitmap.read(&reader.interface, helpers.zigimg_test_allocator);
     defer pixels.deinit(helpers.zigimg_test_allocator);
 
     try helpers.expectEq(the_bitmap.width(), 32);
