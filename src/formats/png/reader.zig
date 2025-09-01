@@ -39,7 +39,7 @@ fn callChunkProcessors(processors: []ReaderProcessor, chunk_process_data: *Chunk
 
     // If noone loaded this chunk we need to skip over it
     if (!processed) {
-        try chunk_process_data.stream.seekBy(@intCast(chunk_process_data.chunk_length + 4));
+        chunk_process_data.reader.toss(@intCast(chunk_process_data.chunk_length + 4));
     }
 }
 
@@ -48,95 +48,90 @@ fn callChunkProcessors(processors: []ReaderProcessor, chunk_process_data: *Chunk
 // slow so we also provide buffering here. We can't used BufferedReader because we need
 // more control than it currently provides.
 const IDatChunksReader = struct {
-    stream: *buffered_stream_source.DefaultBufferedStreamSourceReader,
-    buffer: [4096]u8 = undefined,
-    data: []u8,
+    underlying_reader: *std.Io.Reader,
     processors: []ReaderProcessor,
     chunk_process_data: *ChunkProcessData,
+    /// This many bytes are left of the current chunk, combined in our buffer, and in underlying_reader.
     remaining_chunk_length: u32,
     crc: Crc32,
+    interface: std.Io.Reader,
 
     const Self = @This();
 
     fn init(
-        stream: *buffered_stream_source.DefaultBufferedStreamSourceReader,
+        underlying_reader: *std.Io.Reader,
+        buffer: *[4096]u8,
         processors: []ReaderProcessor,
         chunk_process_data: *ChunkProcessData,
     ) Self {
         var crc = Crc32.init();
         crc.update(png.Chunks.IDAT.name);
         return .{
-            .stream = stream,
-            .data = &[_]u8{},
+            .underlying_reader = underlying_reader,
             .processors = processors,
             .chunk_process_data = chunk_process_data,
             .remaining_chunk_length = chunk_process_data.chunk_length,
             .crc = crc,
+            .interface = .{
+                .buffer = buffer,
+                .end = 0,
+                .seek = 0,
+                .vtable = &.{
+                    .stream = stream,
+                },
+            },
         };
     }
 
-    fn fillBuffer(self: *Self, to_read: usize) ImageUnmanaged.ReadError!usize {
-        mem.copyForwards(u8, self.buffer[0..self.data.len], self.data);
-        const new_start = self.data.len;
-        var max = self.buffer.len;
-        if (max > self.remaining_chunk_length) {
-            max = self.remaining_chunk_length;
-        }
-        const len = try self.stream.read(self.buffer[new_start..max]);
-        self.data = self.buffer[0 .. new_start + len];
-        self.crc.update(self.data[new_start..]);
-        return if (len < to_read) len else to_read;
-    }
-
-    fn read(self: *Self, dest: []u8) ImageUnmanaged.ReadError!usize {
+    //- bs: fill the internal buffer up to `remaining_chunk_length` and try to load the next chunk.
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) error{ EndOfStream, ReadFailed, WriteFailed }!usize {
+        const self: *@This() = @fieldParentPtr("interface", r);
         if (self.remaining_chunk_length == 0) return 0;
-        const new_dest = dest;
 
-        var reader = self.stream.reader();
-        var to_read = new_dest.len;
-        if (to_read > self.remaining_chunk_length) {
-            to_read = self.remaining_chunk_length;
-        }
-        if (to_read > self.data.len) {
-            to_read = try self.fillBuffer(to_read);
-        }
-        @memcpy(new_dest[0..to_read], self.data[0..to_read]);
-        self.remaining_chunk_length -= @intCast(to_read);
-        self.data = self.data[to_read..];
+        const buffer = self.interface.buffer;
+        //- bs: limit reads to @min(`remaining_chunk_length`, .len - .end, limit).
+        const new_bytes = try self.underlying_reader.readSliceShort(
+            limit.slice(buffer[self.interface.end..][0..self.remaining_chunk_length]),
+        );
+        const writeable = buffer[self.interface.end..][0..new_bytes];
+        self.crc.update(writeable);
+        self.remaining_chunk_length -= @intCast(new_bytes);
+        self.interface.end += new_bytes;
 
         if (self.remaining_chunk_length == 0) {
             // First read and check CRC of just finished chunk
-            const expected_crc = try reader.readInt(u32, .big);
+            const expected_crc = try r.takeInt(u32, .big);
             const actual_crc = self.crc.final();
             if (actual_crc != expected_crc) {
-                return ImageUnmanaged.ReadError.InvalidData;
+                return error.ReadFailed;
             }
 
-            try callChunkProcessors(self.processors, self.chunk_process_data);
+            callChunkProcessors(self.processors, self.chunk_process_data) catch |e| switch (e) {
+                error.EndOfStream => return error.EndOfStream,
+                else => return error.ReadFailed,
+            };
 
             self.crc = Crc32.init();
             self.crc.update(png.Chunks.IDAT.name);
 
             // Try to load the next IDAT chunk
-            const chunk = try utils.readStruct(reader, png.ChunkHeader, .big);
+            const chunk = try self.underlying_reader.peekStruct(png.ChunkHeader, .big);
             if (chunk.type == png.Chunks.IDAT.id) {
                 self.remaining_chunk_length = chunk.length;
+                self.underlying_reader.toss(@sizeOf(png.ChunkHeader));
             } else {
-                // Return to the start of the next chunk so code in main struct can read it
-                try self.stream.seekBy(-@sizeOf(png.ChunkHeader));
+                // no more IDAT chunks, we'll naturally start returning 0.
             }
         }
 
-        return to_read;
+        return try w.write(writeable);
     }
 };
-
-const IDATReader = std.io.Reader(*IDatChunksReader, ImageUnmanaged.ReadError, IDatChunksReader.read);
 
 /// Loads only the png header from the stream. Useful when you only metadata.
 pub fn loadHeader(reader: *std.Io.Reader) ImageUnmanaged.ReadError!png.HeaderData {
     const signature = try reader.takeArray(png.magic_header.len);
-    if (!mem.eql(u8, &signature, png.magic_header)) {
+    if (!mem.eql(u8, signature, png.magic_header)) {
         return ImageUnmanaged.ReadError.InvalidData;
     }
 
@@ -145,14 +140,14 @@ pub fn loadHeader(reader: *std.Io.Reader) ImageUnmanaged.ReadError!png.HeaderDat
     if (chunk.length != @sizeOf(png.HeaderData)) return ImageUnmanaged.ReadError.InvalidData;
 
     var header_data: [@sizeOf(png.HeaderData)]u8 = undefined;
-    try reader.readNoEof(&header_data);
+    _ = try reader.readSliceAll(&header_data);
 
-    var struct_stream = std.io.fixedBufferStream(&header_data);
+    var struct_reader = std.Io.Reader.fixed(&header_data);
 
-    const header = try utils.readStruct(struct_stream.reader(), png.HeaderData, .big);
+    const header = try utils.readStruct(&struct_reader, png.HeaderData, .big);
     if (!header.isValid()) return ImageUnmanaged.ReadError.InvalidData;
 
-    const expected_crc = try reader.readInt(u32, .big);
+    const expected_crc = try reader.takeInt(u32, .big);
     var crc = Crc32.init();
     crc.update(png.Chunks.IHDR.name);
     crc.update(&header_data);
@@ -184,12 +179,11 @@ pub fn load(reader: *std.Io.Reader, allocator: Allocator, options: ReaderOptions
 /// Loads the png image for which the header has already been loaded.
 /// For options param description look at the load method docs.
 pub fn loadWithHeader(
-    stream: *ImageUnmanaged.Stream,
+    reader: *std.Io.Reader,
     header: *const png.HeaderData,
     allocator: Allocator,
     in_options: ReaderOptions,
 ) ImageUnmanaged.ReadError!PixelStorage {
-    var buffered_stream = buffered_stream_source.bufferedStreamSourceReader(stream);
     var options = in_options;
     var temp_allocator = options.temp_allocator;
     if (temp_allocator.vtable == &NoopAllocator) {
@@ -205,7 +199,7 @@ pub fn loadWithHeader(
     var result: PixelStorage = undefined;
 
     var chunk_process_data = ChunkProcessData{
-        .stream = &buffered_stream,
+        .reader = reader,
         .chunk_id = png.Chunks.IHDR.id,
         .chunk_length = @sizeOf(png.HeaderData),
         .current_format = header.getPixelFormat(),
@@ -214,10 +208,8 @@ pub fn loadWithHeader(
     };
     try callChunkProcessors(options.processors, &chunk_process_data);
 
-    var reader = buffered_stream.reader();
-
     while (true) {
-        const chunk = (try utils.readStruct(reader, png.ChunkHeader, .big));
+        const chunk = try reader.takeStruct(png.ChunkHeader, .big);
         chunk_process_data.chunk_id = chunk.type;
         chunk_process_data.chunk_length = chunk.length;
 
@@ -227,7 +219,7 @@ pub fn loadWithHeader(
             },
             png.Chunks.IEND.id => {
                 if (!data_found) return ImageUnmanaged.ReadError.InvalidData;
-                _ = try reader.readInt(u32, .big); // Read and ignore the crc
+                _ = try reader.takeInt(u32, .big); // Read and ignore the crc
                 try callChunkProcessors(options.processors, &chunk_process_data);
                 return result;
             },
@@ -236,7 +228,7 @@ pub fn loadWithHeader(
                 if (header.color_type == .indexed and palette.len == 0) {
                     return ImageUnmanaged.ReadError.InvalidData;
                 }
-                result = try readAllData(&buffered_stream, header, palette, allocator, &options, &chunk_process_data);
+                result = try readAllData(reader, header, palette, allocator, &options, &chunk_process_data);
                 data_found = true;
             },
             png.Chunks.PLTE.id => {
@@ -245,7 +237,7 @@ pub fn loadWithHeader(
                 // We ignore if tRNS is already found
                 if (data_found) {
                     // If IDAT was already processed we skip and ignore this palette
-                    try buffered_stream.seekBy(chunk.length + @sizeOf(u32));
+                    reader.toss(chunk.length + @sizeOf(u32));
                 } else {
                     if (chunk.length % 3 != 0) return ImageUnmanaged.ReadError.InvalidData;
                     const palette_entries = chunk.length / 3;
@@ -254,9 +246,9 @@ pub fn loadWithHeader(
                     }
                     palette = try options.temp_allocator.alloc(color.Rgb24, palette_entries);
                     const palette_bytes = mem.sliceAsBytes(palette);
-                    try reader.readNoEof(palette_bytes);
+                    try reader.readSliceAll(palette_bytes);
 
-                    const expected_crc = try reader.readInt(u32, .big);
+                    const expected_crc = try reader.takeInt(u32, .big);
                     var crc = Crc32.init();
                     crc.update(png.Chunks.PLTE.name);
                     crc.update(palette_bytes);
@@ -273,7 +265,7 @@ pub fn loadWithHeader(
 }
 
 fn readAllData(
-    buffered_stream: *buffered_stream_source.DefaultBufferedStreamSourceReader,
+    reader: *std.Io.Reader,
     header: *const png.HeaderData,
     palette: []color.Rgb24,
     allocator: Allocator,
@@ -288,9 +280,10 @@ fn readAllData(
     const dest_format = chunk_process_data.current_format;
     var result = try PixelStorage.init(allocator, dest_format, width * height);
     errdefer result.deinit(allocator);
-    var idat_chunks_reader = IDatChunksReader.init(buffered_stream, options.processors, chunk_process_data);
-    const idat_reader: IDATReader = .{ .context = &idat_chunks_reader };
-    var decompress_stream = std.compress.zlib.decompressor(idat_reader);
+    var idat_buffer: [4096]u8 = undefined;
+    var idat_chunks_reader = IDatChunksReader.init(reader, &idat_buffer, options.processors, chunk_process_data);
+    const idat_reader = &idat_chunks_reader.interface;
+    var decompress = std.compress.flate.Decompress.init(idat_reader, .zlib, &.{});
 
     if (palette.len > 0) {
         var destination_palette = blk: {
@@ -341,15 +334,12 @@ fn readAllData(
         .temp_allocator = options.temp_allocator,
     };
 
-    var decompress_reader = decompress_stream.reader();
+    const decompress_reader = &decompress.reader;
 
     if (header.interlace_method == .none) {
         var i: u32 = 0;
         while (i < height) : (i += 1) {
-            decompress_reader.readNoEof(current_row[filter_stride - 1 ..]) catch |err| switch (err) {
-                error.BadGzipHeader, error.BadZlibHeader, error.WrongGzipChecksum, error.WrongGzipSize, error.WrongZlibChecksum, error.InvalidCode, error.IncompleteHuffmanTree, error.MissingEndOfBlockCode, error.InvalidMatch, error.InvalidBlockType, error.OversubscribedHuffmanTree, error.WrongStoredBlockNlen, error.InvalidDynamicBlockHeader => return ImageUnmanaged.ReadError.InvalidData,
-                else => |leftover_err| return leftover_err,
-            };
+            try decompress_reader.readSliceAll(current_row[filter_stride - 1 ..]);
             try defilter(current_row, prev_row, filter_stride);
 
             process_row_data.dest_row = destination[0..result_line_bytes];
@@ -413,10 +403,7 @@ fn readAllData(
             var desty = start_y[pass];
             var y: u32 = 0;
             while (y < pass_height[pass]) : (y += 1) {
-                decompress_reader.readNoEof(current_row[filter_stride - 1 .. pass_length]) catch |err| switch (err) {
-                    error.BadGzipHeader, error.BadZlibHeader, error.WrongGzipChecksum, error.WrongGzipSize, error.WrongZlibChecksum, error.InvalidCode, error.IncompleteHuffmanTree, error.MissingEndOfBlockCode, error.InvalidMatch, error.InvalidBlockType, error.OversubscribedHuffmanTree, error.WrongStoredBlockNlen, error.InvalidDynamicBlockHeader => return ImageUnmanaged.ReadError.InvalidData,
-                    else => |leftover_err| return leftover_err,
-                };
+                try decompress_reader.readSliceAll(current_row[filter_stride - 1 .. pass_length]);
                 try defilter(current_row[0..pass_length], prev_row[0..pass_length], filter_stride);
 
                 process_row_data.dest_row = dest_row[0..result_pass_line_bytes];
@@ -458,24 +445,7 @@ fn readAllData(
 
     // Just make sure zip stream gets to its end
     var buf: [8]u8 = undefined;
-    const shouldBeZero = decompress_stream.read(buf[0..]) catch |err| switch (err) {
-        error.BadGzipHeader,
-        error.BadZlibHeader,
-        error.WrongGzipChecksum,
-        error.WrongGzipSize,
-        error.WrongZlibChecksum,
-        error.InvalidCode,
-        error.IncompleteHuffmanTree,
-        error.MissingEndOfBlockCode,
-        error.InvalidMatch,
-        error.InvalidBlockType,
-        error.OversubscribedHuffmanTree,
-        error.WrongStoredBlockNlen,
-        error.InvalidDynamicBlockHeader,
-        error.EndOfStream,
-        => return ImageUnmanaged.ReadError.InvalidData,
-        else => |leftover_err| return leftover_err,
-    };
+    const shouldBeZero = try decompress.reader.readSliceShort(buf[0..]);
 
     std.debug.assert(shouldBeZero == 0);
 
@@ -592,7 +562,7 @@ fn callRowProcessors(processors: []ReaderProcessor, process_data: *RowProcessDat
 }
 
 pub const ChunkProcessData = struct {
-    stream: *buffered_stream_source.DefaultBufferedStreamSourceReader,
+    reader: *std.Io.Reader,
     chunk_id: u32,
     chunk_length: u32,
     current_format: PixelFormat,
@@ -709,39 +679,38 @@ pub const TrnsProcessor = struct {
         // We ignore if we encounter this chunk with color_type that already has alpha
         var result_format = data.current_format;
         if (self.processed) {
-            try data.stream.seekBy(data.chunk_length + @sizeOf(u32)); // Skip invalid
+            data.reader.toss(data.chunk_length + @sizeOf(u32)); // Skip invalid
             return result_format;
         }
-        var reader = data.stream.reader();
         switch (data.header.getPixelFormat()) {
             .grayscale1, .grayscale2, .grayscale4, .grayscale8, .grayscale16 => {
                 if (data.chunk_length == 2) {
-                    self.trns_data = .{ .gray = try reader.readInt(u16, .big) };
+                    self.trns_data = .{ .gray = try data.reader.takeInt(u16, .big) };
                     result_format = if (result_format == .grayscale16) .grayscale16Alpha else .grayscale8Alpha;
                 } else {
-                    try data.stream.seekBy(data.chunk_length); // Skip invalid
+                    data.reader.toss(data.chunk_length); // Skip invalid
                 }
             },
             .indexed1, .indexed2, .indexed4, .indexed8, .indexed16 => {
                 if (data.chunk_length <= data.header.maxPaletteSize()) {
                     self.trns_data = .{ .index_alpha = try data.temp_allocator.alloc(u8, data.chunk_length) };
-                    try reader.readNoEof(self.trns_data.index_alpha);
+                    try data.reader.readSliceAll(self.trns_data.index_alpha);
                 } else {
-                    try data.stream.seekBy(data.chunk_length); // Skip invalid
+                    data.reader.toss(data.chunk_length); // Skip invalid
                 }
             },
             .rgb24, .rgb48 => {
                 if (data.chunk_length == @sizeOf(color.Rgb48)) {
-                    self.trns_data = .{ .rgb = try utils.readStruct(reader, color.Rgb48, .big) };
+                    self.trns_data = .{ .rgb = try data.reader.takeStruct(color.Rgb48, .big) };
                     result_format = if (result_format == .rgb48) .rgba64 else .rgba32;
                 } else {
-                    try data.stream.seekBy(data.chunk_length); // Skip invalid
+                    data.reader.toss(data.chunk_length); // Skip invalid
                 }
             },
-            else => try data.stream.seekBy(data.chunk_length), // Skip invalid
+            else => data.reader.toss(data.chunk_length), // Skip invalid
         }
         // Skip the Crc since this is not critical chunk
-        try data.stream.seekBy(@sizeOf(u32));
+        data.reader.toss(@sizeOf(u32));
         return result_format;
     }
 

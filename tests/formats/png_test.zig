@@ -848,11 +848,11 @@ test "png: Write rgba64 format" {
     const read_file = try helpers.testOpenFile(image_file_name);
     defer read_file.close();
 
-    var stream_source = std.io.StreamSource{ .file = read_file };
+    var file_reader = read_file.reader(&.{});
 
     var options = png.DefaultOptions.init(.{});
 
-    var read_image = try png.load(&stream_source, helpers.zigimg_test_allocator, options.get());
+    var read_image = try png.load(&file_reader.interface, helpers.zigimg_test_allocator, options.get());
     defer read_image.deinit(helpers.zigimg_test_allocator);
 
     try std.testing.expect(read_image.pixels == .rgba64);
@@ -874,33 +874,33 @@ test "PNG Official Test Suite" {
 // Useful to quickly test everything on full dir of images
 pub fn testWithDir(directory: []const u8, testMd5Sig: bool) !void {
     var testdir = std.fs.cwd().openDir(directory, .{ .access_sub_paths = false, .no_follow = true, .iterate = true }) catch null;
-    if (testdir) |*idir| {
-        defer idir.close();
-        var it = idir.iterate();
+    if (testdir) |*dir| {
+        defer dir.close();
+        var it = dir.iterate();
         if (testMd5Sig) std.debug.print("\n", .{});
         while (try it.next()) |entry| {
             if (entry.kind != .file or !std.mem.eql(u8, std.fs.path.extension(entry.name), ".png")) continue;
 
             if (testMd5Sig) std.debug.print("Testing file {s} ... ", .{entry.name});
-            var tst_file = try idir.openFile(entry.name, .{ .mode = .read_only });
+            var tst_file = try dir.openFile(entry.name, .{ .mode = .read_only });
             defer tst_file.close();
-            var stream = Image.Stream{ .file = tst_file };
+            var file_reader = tst_file.reader(&.{});
             if (entry.name[0] == 'x' and entry.name[2] != 't' and entry.name[2] != 's') {
-                try std.testing.expectError(Image.ReadError.InvalidData, png.loadHeader(&stream));
+                try std.testing.expectError(Image.ReadError.InvalidData, png.loadHeader(&file_reader.interface));
                 if (testMd5Sig) std.debug.print("OK\n", .{});
                 continue;
             }
 
             var default_options = png.DefaultOptions.init(.{});
-            var header = try png.loadHeader(&stream);
+            var header = try png.loadHeader(&file_reader.interface);
             if (entry.name[0] == 'x') {
-                const error_result = png.loadWithHeader(&stream, &header, std.testing.allocator, default_options.get());
+                const error_result = png.loadWithHeader(&file_reader.interface, &header, std.testing.allocator, default_options.get());
                 try std.testing.expectError(Image.ReadError.InvalidData, error_result);
                 if (testMd5Sig) std.debug.print("OK\n", .{});
                 continue;
             }
 
-            var result = try png.loadWithHeader(&stream, &header, std.testing.allocator, default_options.get());
+            var result = try png.loadWithHeader(&file_reader.interface, &header, std.testing.allocator, default_options.get());
             defer result.deinit(std.testing.allocator);
 
             if (!testMd5Sig) continue;
@@ -915,20 +915,20 @@ pub fn testWithDir(directory: []const u8, testMd5Sig: bool) !void {
             @memcpy(tst_data_name[len - 3 .. len], "tsd");
 
             // Read test data and check with it
-            if (idir.openFile(tst_data_name[0..len], .{ .mode = .read_only })) |tdata| {
+            if (dir.openFile(tst_data_name[0..len], .{ .mode = .read_only })) |tdata| {
                 defer tdata.close();
-                var treader = tdata.reader();
+                var treader = tdata.reader(&.{});
                 var expected_md5: [16]u8 = undefined;
                 var read_buffer: [50]u8 = undefined;
                 const str_format = try treader.readUntilDelimiter(read_buffer[0..], '\n');
                 const expected_pixel_format = std.meta.stringToEnum(PixelFormat, str_format).?;
-                const str_md5 = try treader.readUntilDelimiterOrEof(read_buffer[0..], '\n');
+                const str_md5 = try treader.interface.readUntilDelimiterOrEof(read_buffer[0..], '\n');
                 _ = try std.fmt.hexToBytes(expected_md5[0..], str_md5.?);
                 try std.testing.expectEqual(expected_pixel_format, std.meta.activeTag(result));
                 try std.testing.expectEqualSlices(u8, expected_md5[0..], md5_val[0..]); // catch std.debug.print("MD5 Expected: {s} Got {s}\n", .{std.fmt.fmtSliceHexUpper(expected_md5[0..]), std.fmt.fmtSliceHexUpper(md5_val[0..])});
             } else |_| {
                 // If there is no test data assume test is correct and write it out
-                try writeTestData(idir, tst_data_name[0..len], &result, md5_val[0..]);
+                try writeTestData(dir, tst_data_name[0..len], &result, md5_val[0..]);
             }
 
             if (testMd5Sig) std.debug.print("OK\n", .{});
@@ -953,30 +953,27 @@ test "InfoProcessor on Png Test suite" {
     const directory = helpers.fixtures_path ++ "png/";
 
     var testdir = std.fs.cwd().openDir(directory, .{ .access_sub_paths = false, .no_follow = true, .iterate = true }) catch null;
-    if (testdir) |*idir| {
-        defer idir.close();
-        var it = idir.iterate();
-
-        var info_buffer: [16384]u8 = undefined;
-        var info_stream = std.io.StreamSource{ .buffer = std.io.fixedBufferStream(info_buffer[0..]) };
+    if (testdir) |*dir| {
+        defer dir.close();
+        var it = dir.iterate();
 
         while (try it.next()) |entry| {
             if (entry.kind != .file or !std.mem.eql(u8, std.fs.path.extension(entry.name), ".png")) {
                 continue;
             }
 
-            var options = InfoProcessor.PngInfoOptions.init(InfoProcessor.init(info_stream.writer()));
+            var info_buffer: [16384]u8 = undefined;
+            var info_writer = std.Io.Writer.fixed(&info_buffer);
+            var options = InfoProcessor.PngInfoOptions.init(InfoProcessor{ .writer = &info_writer });
 
-            var tst_file = try idir.openFile(entry.name, .{ .mode = .read_only });
+            var tst_file = try dir.openFile(entry.name, .{ .mode = .read_only });
             defer tst_file.close();
-            var stream = Image.Stream{ .file = tst_file };
+            var file_reader = tst_file.reader(&.{});
             if (entry.name[0] == 'x') {
                 continue;
             }
 
-            info_stream.buffer.reset();
-
-            var result = try png.load(&stream, std.testing.allocator, options.get());
+            var result = try png.load(&file_reader.interface, std.testing.allocator, options.get());
             defer result.deinit(helpers.zigimg_test_allocator);
 
             const len = entry.name.len + 1;
@@ -985,17 +982,18 @@ test "InfoProcessor on Png Test suite" {
             @memcpy(tst_data_name[len - 4 .. len], "info");
 
             // Read test data and check with it
-            if (idir.openFile(tst_data_name[0..len], .{ .mode = .read_only })) |tdata| {
+            if (dir.openFile(tst_data_name[0..len], .{ .mode = .read_only })) |tdata| {
                 defer tdata.close();
                 var expected_data_buffer: [16384]u8 = undefined;
-                const loaded = try tdata.reader().readAll(expected_data_buffer[0..]);
+                var tdata_reader = tdata.reader(&.{});
+                const loaded = try tdata_reader.interface.readSliceShort(expected_data_buffer[0..]);
                 try std.testing.expectEqualSlices(u8, expected_data_buffer[0..loaded], info_buffer[0..loaded]);
             } else |_| {
                 // If there is no test data assume test is correct and write it out
-                var toutput = try idir.createFile(tst_data_name[0..len], .{});
+                var toutput = try dir.createFile(tst_data_name[0..len], .{});
                 defer toutput.close();
-                var writer = toutput.writer();
-                try writer.writeAll(info_buffer[0..info_stream.buffer.pos]);
+                var writer = toutput.writer(&.{});
+                try writer.interface.writeAll(info_buffer[0..info_writer.end]);
             }
         }
     }

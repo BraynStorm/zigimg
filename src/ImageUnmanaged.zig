@@ -20,7 +20,7 @@ const SupportedFormats = struct {
     // pub const pbm = formats.netpbm.PBM;
     // pub const pcx = formats.pcx.PCX;
     // pub const pgm = formats.netpbm.PGM;
-    // pub const png = formats.png.PNG;
+    pub const png = formats.png.PNG;
     // pub const ppm = formats.netpbm.PPM;
     // pub const qoi = formats.qoi.QOI;
     // pub const ras = formats.ras.RAS;
@@ -42,7 +42,7 @@ pub const EncoderOptions = union(Format) {
     // pbm: SupportedFormats.pbm.EncoderOptions,
     // pcx: SupportedFormats.pcx.EncoderOptions,
     // pgm: SupportedFormats.pgm.EncoderOptions,
-    // png: SupportedFormats.png.EncoderOptions,
+    png: SupportedFormats.png.EncoderOptions,
     // ppm: SupportedFormats.ppm.EncoderOptions,
     // qoi: SupportedFormats.qoi.EncoderOptions,
     // ras: void,

@@ -3,10 +3,10 @@ const io = std.io;
 const deflate = std.compress.flate;
 
 /// Zlib Compressor (Deflate) with a writer interface
-pub fn ZlibCompressor(comptime WriterType: type) type {
+pub fn ZlibCompressor() type {
     return struct {
-        raw_writer: WriterType,
-        compressor: deflate.Compressor(WriterType),
+        raw_writer: *std.Io.Writer,
+        compressor: deflate.Compress,
         adler: std.hash.Adler32,
 
         const Self = @This();
@@ -14,9 +14,9 @@ pub fn ZlibCompressor(comptime WriterType: type) type {
         // TODO: find why doing it an other way segfaults
         /// Inits a zlibcompressor
         /// This is made this way because not doing it in place segfaults for a reason
-        pub fn init(self: *Self, stream: WriterType) !void {
-            self.raw_writer = stream;
-            self.compressor = try deflate.compressor(self.raw_writer, .{});
+        pub fn init(self: *Self, writer: *std.Io.Writer) !void {
+            _ = writer; // autofix
+            self.compressor = try deflate.Compress(self.raw_writer, .{});
             self.adler = std.hash.Adler32.init();
         }
 
@@ -38,13 +38,6 @@ pub fn ZlibCompressor(comptime WriterType: type) type {
             try wr.writeByte(compression_flags);
         }
 
-        pub const Error = deflate.Compressor(WriterType).Error;
-        pub const Writer = std.io.Writer(*Self, Error, write);
-
-        pub fn writer(self: *Self) Writer {
-            return .{ .context = self };
-        }
-
         pub fn write(self: *Self, bytes: []const u8) Error!usize {
             const amount = try self.compressor.writer().write(bytes);
             self.adler.update(bytes[0..amount]);
@@ -54,7 +47,7 @@ pub fn ZlibCompressor(comptime WriterType: type) type {
         /// Ends a zlib block with the checksum
         pub fn end(self: *Self) !void {
             // Write the checksum
-            try self.compressor.finish();
+            try self.compressor.end();
             try self.raw_writer.writeInt(u32, self.adler.final(), .big);
         }
     };

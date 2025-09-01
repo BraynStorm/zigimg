@@ -15,13 +15,9 @@ pub const PngInfoOptions = CustomReaderOptions1(Self);
 
 const Self = @This();
 
-writer: std.io.StreamSource.Writer,
+writer: *std.Io.Writer,
 idat_count: u32 = 0,
 idat_size: u64 = 0,
-
-pub fn init(writer: std.io.StreamSource.Writer) Self {
-    return .{ .writer = writer };
-}
 
 pub fn processor(self: *Self) ReaderProcessor {
     return ReaderProcessor.init(

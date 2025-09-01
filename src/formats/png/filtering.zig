@@ -25,7 +25,7 @@ pub const FilterChoice = union(FilterChoiceStrategies) {
     specified: FilterType,
 };
 
-pub fn filter(allocator: std.mem.Allocator, writer: anytype, pixels: color.PixelStorage, filter_choice: FilterChoice, header: HeaderData) Image.WriteError!void {
+pub fn filter(allocator: std.mem.Allocator, writer: *std.Io.Writer, pixels: color.PixelStorage, filter_choice: FilterChoice, header: HeaderData) Image.WriteError!void {
     const line_bytes = header.lineBytes();
     const scanline_allocation_size = 2 * line_bytes;
 
@@ -207,8 +207,10 @@ test "filtering 16-bit grayscale pixels uses correct endianess" {
     });
     defer std.testing.allocator.free(pixels);
 
+    var writer = std.Io.Writer.Allocating.init(std.testing.allocator);
+
     // We specify the endianess as none to simplify the test
-    try filter(std.testing.allocator, output_bytes.writer(std.testing.allocator), .{ .grayscale16 = pixels }, .{ .specified = .none }, .{
+    try filter(std.testing.allocator, &writer.writer, .{ .grayscale16 = pixels }, .{ .specified = .none }, .{
         .width = 4,
         .height = 2,
         .bit_depth = 16,
@@ -221,5 +223,5 @@ test "filtering 16-bit grayscale pixels uses correct endianess" {
     try std.testing.expectEqualSlices(u8, &.{
         0x00, 0x00, 0x0F, 0x00, 0xFF, 0x0F, 0xFF, 0xFF, 0xFF, //
         0x00, 0x00, 0x0F, 0x00, 0xFF, 0x0F, 0xFF, 0xFF, 0xFF, //
-    }, output_bytes.items);
+    }, writer.written());
 }

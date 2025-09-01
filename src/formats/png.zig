@@ -1,7 +1,6 @@
 // Implement PNG image format according to W3C Portable Network Graphics (PNG) specification second edition (ISO/IEC 15948:2003 (E))
 // Last version: https://www.w3.org/TR/PNG/
 
-const buffered_stream_source = @import("../buffered_stream_source.zig");
 const chunk_writer = @import("png/chunk_writer.zig");
 const color = @import("../color.zig");
 const filter = @import("png/filtering.zig");
@@ -13,7 +12,6 @@ const PixelFormat = @import("../pixel_format.zig").PixelFormat;
 const reader = @import("png/reader.zig");
 const std = @import("std");
 const types = @import("png/types.zig");
-const ZlibCompressor = @import("png/zlib_compressor.zig").ZlibCompressor;
 
 pub const HeaderData = types.HeaderData;
 pub const ColorType = types.ColorType;
@@ -65,7 +63,7 @@ pub const PNG = struct {
         return load(r, allocator, options.get());
     }
 
-    pub fn writeImage(allocator: std.mem.Allocator, write_stream: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
+    pub fn writeImage(allocator: std.mem.Allocator, writer: *std.Io.Writer, image: ImageUnmanaged, encoder_options: ImageUnmanaged.EncoderOptions) ImageWriteError!void {
         const options = encoder_options.png;
 
         try ensureWritable(image);
@@ -82,20 +80,16 @@ pub const PNG = struct {
 
         std.debug.assert(header.isValid());
 
-        try write(allocator, write_stream, image.pixels, header, options.filter_choice);
+        try write(allocator, writer, image.pixels, header, options.filter_choice);
     }
 
-    pub fn write(allocator: std.mem.Allocator, write_stream: *std.Io.Writer, pixels: color.PixelStorage, header: HeaderData, filter_choice: filter.FilterChoice) ImageWriteError!void {
-        var buffered_stream = buffered_stream_source.bufferedStreamSourceWriter(write_stream);
-
+    pub fn write(allocator: std.mem.Allocator, writer: *std.Io.Writer, pixels: color.PixelStorage, header: HeaderData, filter_choice: filter.FilterChoice) ImageWriteError!void {
         if (header.interlace_method != .none)
             return ImageWriteError.Unsupported;
         if (header.compression_method != .deflate)
             return ImageWriteError.Unsupported;
         if (header.filter_method != .adaptive)
             return ImageWriteError.Unsupported;
-
-        const writer = buffered_stream.writer();
 
         try writeSignature(writer);
         try writeHeader(writer, header);
@@ -107,7 +101,7 @@ pub const PNG = struct {
         try writeData(allocator, writer, pixels, header, filter_choice);
         try writeTrailer(writer);
 
-        try buffered_stream.flush();
+        try writer.flush();
     }
 
     pub fn ensureWritable(image: ImageUnmanaged) !void {
@@ -143,9 +137,10 @@ pub const PNG = struct {
     }
 
     // IHDR
-    fn writeHeader(writer: anytype, header: HeaderData) ImageWriteError!void {
-        var chunk = chunk_writer.chunkWriter(writer, "IHDR");
-        var chunk_wr = chunk.writer();
+    fn writeHeader(writer: *std.Io.Writer, header: HeaderData) ImageWriteError!void {
+        var chunk_buffer: [chunk_writer.BufferSize]u8 = undefined;
+        var chunk = chunk_writer.chunkWriter(writer, &chunk_buffer, "IHDR");
+        var chunk_wr = &chunk.interface;
 
         try chunk_wr.writeInt(u32, header.width, .big);
         try chunk_wr.writeInt(u32, header.height, .big);
@@ -155,36 +150,37 @@ pub const PNG = struct {
         try chunk_wr.writeInt(u8, @intFromEnum(header.filter_method), .big);
         try chunk_wr.writeInt(u8, @intFromEnum(header.interlace_method), .big);
 
-        try chunk.flush();
+        try chunk_wr.flush();
     }
 
     // IDAT (multiple maybe)
-    fn writeData(allocator: std.mem.Allocator, writer: anytype, pixels: color.PixelStorage, header: HeaderData, filter_choice: filter.FilterChoice) ImageWriteError!void {
+    fn writeData(allocator: std.mem.Allocator, writer: *std.Io.Writer, pixels: color.PixelStorage, header: HeaderData, filter_choice: filter.FilterChoice) ImageWriteError!void {
         // Note: there may be more than 1 chunk
         // TODO: provide choice of how much it buffers (how much data per idat chunk)
-        var chunks = chunk_writer.chunkWriter(writer, "IDAT");
-        const chunk_wr = chunks.writer();
+        var chunk_buffer: [chunk_writer.BufferSize]u8 = undefined;
+        var chunks = chunk_writer.chunkWriter(writer, &chunk_buffer, "IDAT");
+        var chunk_wr = &chunks.interface;
 
-        var zlib: ZlibCompressor(@TypeOf(chunk_wr)) = undefined;
-        try zlib.init(chunk_wr);
-
-        try zlib.begin();
-        try filter.filter(allocator, zlib.writer(), pixels, filter_choice, header);
+        var zlib = std.compress.flate.Compress.init(chunk_wr, &.{}, .{ .container = .zlib, .level = .default });
+        try filter.filter(allocator, &zlib.writer, pixels, filter_choice, header);
         try zlib.end();
 
-        try chunks.flush();
+        try chunk_wr.flush();
     }
 
     // IEND chunk
-    fn writeTrailer(writer: anytype) ImageWriteError!void {
-        var chunk = chunk_writer.chunkWriter(writer, "IEND");
-        try chunk.flush();
+    fn writeTrailer(writer: *std.Io.Writer) ImageWriteError!void {
+        var chunk_buffer: [chunk_writer.BufferSize]u8 = undefined;
+        var chunk = chunk_writer.chunkWriter(writer, &chunk_buffer, "IEND");
+        var chunk_wr = &chunk.interface;
+        try chunk_wr.flush();
     }
 
     // PLTE (if indexed storage)
-    fn writePalette(writer: anytype, pixels: color.PixelStorage) ImageWriteError!void {
-        var chunk = chunk_writer.chunkWriter(writer, "PLTE");
-        var chunk_wr = chunk.writer();
+    fn writePalette(writer: *std.Io.Writer, pixels: color.PixelStorage) ImageWriteError!void {
+        var chunk_buffer: [chunk_writer.BufferSize]u8 = undefined;
+        var chunk = chunk_writer.chunkWriter(writer, &chunk_buffer, "PLTE");
+        var chunk_wr = &chunk.interface;
 
         const palette = switch (pixels) {
             .indexed1 => |d| d.palette,
@@ -201,16 +197,16 @@ pub const PNG = struct {
             try chunk_wr.writeByte(col.b);
         }
 
-        try chunk.flush();
+        try chunk_wr.flush();
     }
 
     // tRNS (Transparency information)
-    fn writeTransparencyInfo(writer: anytype, pixels: color.PixelStorage) ImageWriteError!void {
+    fn writeTransparencyInfo(writer: *std.Io.Writer, pixels: color.PixelStorage) ImageWriteError!void {
         // TODO: For pixel format with alpha, try to check if the pixel with alpha are all the same color, if yes, we can change the format to their non-alpha counterpart with a tRNS chunk
         // TODO: For pixel format without alpha, add a write option to force which color should be consider transparent
 
         const TrnsIndexedWriter = struct {
-            pub fn write(writer_param: anytype, indexed: anytype) ImageWriteError!void {
+            pub fn write(writer_param: *std.Io.Writer, indexed: anytype) ImageWriteError!void {
                 var write_trns: bool = false;
 
                 for (indexed.palette) |entry| {
@@ -224,14 +220,15 @@ pub const PNG = struct {
                     return;
                 }
 
-                var chunk = chunk_writer.chunkWriter(writer_param, "tRNS");
-                var chunk_wr = chunk.writer();
+                var chunk_buffer: [chunk_writer.BufferSize]u8 = undefined;
+                var chunk = chunk_writer.chunkWriter(writer_param, &chunk_buffer, "tRNS");
+                var chunk_wr = &chunk.interface;
 
                 for (indexed.palette) |col| {
                     try chunk_wr.writeByte(col.a);
                 }
 
-                try chunk.flush();
+                try chunk_wr.flush();
             }
         };
 

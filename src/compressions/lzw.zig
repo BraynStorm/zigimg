@@ -47,7 +47,7 @@ pub fn Decoder(comptime endian: std.builtin.Endian) type {
         }
 
         pub fn decode(self: *Self, reader: *std.Io.Reader, writer: anytype) !void {
-            var bit_reader = reader;
+            var bit_reader = @import("../bit_reader.zig").RealBitReader{ .source = reader };
 
             var bits_to_read = self.code_size + 1;
 
